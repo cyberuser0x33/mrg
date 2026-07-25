@@ -1,9 +1,9 @@
 use crate::config::DEFAULT_IGNORE_CONTENT;
 use crate::tokenizer::AICounter;
 use crate::utils::{
-    MaximizeFilters, ProcessingMode, TreeNode, format_file_size,
-    get_current_timestamp, maximize_content, minify_content, select_mrg_file,
-    is_binary_file, clean_path_for_display, match_pattern,
+    MaximizeFilters, ProcessingMode, TreeNode, clean_path_for_display, format_file_size,
+    get_current_timestamp, is_binary_file, match_pattern, maximize_content, minify_content,
+    select_mrg_file,
 };
 use anyhow::Result;
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
@@ -40,7 +40,7 @@ struct FileResult {
     gpt_tokens: usize,
     gemini_tokens: usize,
     claude_tokens: usize,
-    words: usize,
+    words: usize
     chars: usize,
 }
 
@@ -344,9 +344,9 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
     let mut final_dirs = Vec::new();
     if options.only.is_some() {
         for (_, rel_path) in &dirs {
-            let is_prefix = final_files.iter().any(|(_, f_rel)| {
-                f_rel.starts_with(&format!("{}/", rel_path))
-            });
+            let is_prefix = final_files
+                .iter()
+                .any(|(_, f_rel)| f_rel.starts_with(&format!("{}/", rel_path)));
             if is_prefix {
                 final_dirs.push(rel_path.clone());
             }
@@ -368,10 +368,10 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
     let mut tree_lines = Vec::new();
     root_tree.build_lines("", &mut tree_lines);
 
-
     // Initialize Tokenizer (load_all = false)
-    let ai_counter =
-        std::sync::Arc::new(AICounter::new("AItokenizers", false).map_err(|e| anyhow::anyhow!("{}", e))?);
+    let ai_counter = std::sync::Arc::new(
+        AICounter::new("AItokenizers", false).map_err(|e| anyhow::anyhow!("{}", e))?,
+    );
 
     // 4. Parallel file processing (Rayon)
     println!("[*] Processing and tokenizing files...");
@@ -534,7 +534,11 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
     println!("[*] Files merged: {}", format_count(processed_files.len()));
     println!("[*] Files ignored: {}", format_count(total_ignored_count));
 
-    println!("Words: {}, Characters: {}", format_count(total_words), format_count(total_chars));
+    println!(
+        "Words: {}, Characters: {}",
+        format_count(total_words),
+        format_count(total_chars)
+    );
     println!("SHA3-256-data: {}", hash_hex);
     println!("\nToken Statistics (there may be some margin of error): ");
     println!("GPT4-O1-O3-Mini: ~{}", format_count(total_gpt));
@@ -564,7 +568,8 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
             Confirm::with_theme(&ColorfulTheme::default())
                 .with_prompt(format!(
                     "Token count ~{} exceeds the limit of {}. Split into parts?",
-                    format_count(max_tokens), format_count(limit)
+                    format_count(max_tokens),
+                    format_count(limit)
                 ))
                 .default(true)
                 .interact()
@@ -585,7 +590,10 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
         };
         fs::create_dir_all(&split_dir_path)?;
 
-        println!("[*] Splitting project into parts in {}", clean_path_for_display(&split_dir_path));
+        println!(
+            "[*] Splitting project into parts in {}",
+            clean_path_for_display(&split_dir_path)
+        );
 
         let mut part_num = 1;
         let mut part_files = Vec::new();
@@ -646,22 +654,22 @@ fn write_merged_file(
     part_files: &[&FileResult],
     part_num: Option<usize>,
 ) -> Result<String> {
-    use std::io::Write;
     use sha3::Digest;
+    use std::io::Write;
 
     let temp_path = output_path.with_extension("tmp");
     let res = (|| -> Result<String> {
         let temp_file = fs::File::create(&temp_path)?;
         let mut writer = std::io::BufWriter::new(temp_file);
-        
+
         let mut hasher = sha3::Sha3_256::new();
-        
+
         let mut write_body = |data: &str| -> std::io::Result<()> {
             writer.write_all(data.as_bytes())?;
             hasher.update(data.as_bytes());
             Ok(())
         };
-        
+
         write_body("Project Structure:\n")?;
         write_body(&format!("{}/\n", root_name))?;
         for line in tree_lines {
@@ -669,7 +677,7 @@ fn write_merged_file(
             write_body("\n")?;
         }
         write_body("\n")?;
-        
+
         for file_res in part_files {
             write_body(&format!("=== start {} ===\n", file_res.rel_path))?;
             write_body(&file_res.content)?;
@@ -678,12 +686,12 @@ fn write_merged_file(
             }
             write_body(&format!("=== end {} ===\n\n", file_res.rel_path))?;
         }
-        
+
         writer.flush()?;
         drop(writer);
-        
+
         let hash_hex = hex::encode(hasher.finalize());
-        
+
         let real_header = if let Some(p_num) = part_num {
             format!(
                 "Project merger tool v{}\n{} (part {}) ({})\nhash(sha3-256):{}\n**********\n",
@@ -695,13 +703,13 @@ fn write_merged_file(
                 version, root_name, timestamp, hash_hex
             )
         };
-        
+
         let mut final_file = fs::File::create(output_path)?;
         final_file.write_all(real_header.as_bytes())?;
-        
+
         let mut temp_file = fs::File::open(&temp_path)?;
         std::io::copy(&mut temp_file, &mut final_file)?;
-        
+
         fs::remove_file(&temp_path)?;
         Ok(hash_hex)
     })();
@@ -783,7 +791,10 @@ pub fn run_tokenize(file_path: Option<PathBuf>) -> Result<()> {
     };
 
     if !target_path.exists() {
-        anyhow::bail!("Error: File {} does not exist.", clean_path_for_display(&target_path));
+        anyhow::bail!(
+            "Error: File {} does not exist.",
+            clean_path_for_display(&target_path)
+        );
     }
 
     if is_binary_file(&target_path)? {
@@ -791,7 +802,10 @@ pub fn run_tokenize(file_path: Option<PathBuf>) -> Result<()> {
     }
 
     let file_content = fs::read_to_string(&target_path)?;
-    println!("[*] Tokenizing file: {}", clean_path_for_display(&target_path));
+    println!(
+        "[*] Tokenizing file: {}",
+        clean_path_for_display(&target_path)
+    );
 
     // Initialize all 10 tokenizers
     let ai_counter = AICounter::new("AItokenizers", true).map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -799,18 +813,39 @@ pub fn run_tokenize(file_path: Option<PathBuf>) -> Result<()> {
     let counts = ai_counter.count_tokens_all(&file_content);
 
     println!("\nToken Statistics for all models:");
-    
+
     let display_order = [
-        (crate::tokenizer::ModelKind::Gpt4oO1O3Mini, "GPT4-O1-O3-Mini:"),
-        (crate::tokenizer::ModelKind::Gpt4TurboGpt35Turbo, "GPT4-Turbo-GPT3.5-Turbo:"),
-        (crate::tokenizer::ModelKind::GeminiGemma7b, "Gemini-Gemma7B:"),
-        (crate::tokenizer::ModelKind::Claude35SonnetOpus, "Claude3.5-Sonnet-Opus:"),
+        (
+            crate::tokenizer::ModelKind::Gpt4oO1O3Mini,
+            "GPT4-O1-O3-Mini:",
+        ),
+        (
+            crate::tokenizer::ModelKind::Gpt4TurboGpt35Turbo,
+            "GPT4-Turbo-GPT3.5-Turbo:",
+        ),
+        (
+            crate::tokenizer::ModelKind::GeminiGemma7b,
+            "Gemini-Gemma7B:",
+        ),
+        (
+            crate::tokenizer::ModelKind::Claude35SonnetOpus,
+            "Claude3.5-Sonnet-Opus:",
+        ),
         (crate::tokenizer::ModelKind::Llama32, "LLAMA3-3.1-3.2:"),
-        (crate::tokenizer::ModelKind::DeepSeekV2V3R1, "DeepSeekV2-V3-R1:"),
+        (
+            crate::tokenizer::ModelKind::DeepSeekV2V3R1,
+            "DeepSeekV2-V3-R1:",
+        ),
         (crate::tokenizer::ModelKind::Qwen25Coder, "Qwen2.5-Coder:"),
-        (crate::tokenizer::ModelKind::MistralCodestral, "Mistral-Codestral:"),
+        (
+            crate::tokenizer::ModelKind::MistralCodestral,
+            "Mistral-Codestral:",
+        ),
         (crate::tokenizer::ModelKind::Phi3Phi4, "Phi3-Phi4:"),
-        (crate::tokenizer::ModelKind::CohereCommandRPlus, "Cohere-CommandR-R+:"),
+        (
+            crate::tokenizer::ModelKind::CohereCommandRPlus,
+            "Cohere-CommandR-R+:",
+        ),
     ];
 
     for &(kind, label) in &display_order {
@@ -917,4 +952,3 @@ fn prompt_large_file(rel_path: &str, size_str: &str, limit_str: &str) -> Result<
         }
     }
 }
-

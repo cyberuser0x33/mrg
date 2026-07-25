@@ -1,10 +1,10 @@
 use anyhow::{Result, anyhow, bail};
+use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::blocking::Client;
 use reqwest::header::USER_AGENT;
 use std::fs;
 use std::path::PathBuf;
 use tokenizers::tokenizer::Tokenizer;
-use indicatif::{ProgressBar, ProgressStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelKind {
@@ -105,7 +105,8 @@ pub struct AICounter {
 
 impl AICounter {
     pub fn new(folder_name: &str, load_all: bool) -> Result<Self> {
-        let base_dir = dirs::data_local_dir().ok_or_else(|| anyhow!("Local data directory not found"))?;
+        let base_dir =
+            dirs::data_local_dir().ok_or_else(|| anyhow!("Local data directory not found"))?;
         let tokenizers_dir = base_dir.join("mrgfile").join(folder_name);
 
         if !tokenizers_dir.exists() {
@@ -157,7 +158,8 @@ impl AICounter {
                     let _ = fs::remove_file(&path);
                     anyhow!(
                         "Dictionary error {}: {}. File was deleted, please try again.",
-                        model.display_name, e
+                        model.display_name,
+                        e
                     )
                 })?;
                 tokenizers.insert(model.kind, t);
@@ -167,12 +169,7 @@ impl AICounter {
         Ok(Self { tokenizers })
     }
 
-    fn download_tokenizer(
-        name: &str,
-        url: &str,
-        path: &PathBuf,
-        pb: &ProgressBar,
-    ) -> Result<()> {
+    fn download_tokenizer(name: &str, url: &str, path: &PathBuf, pb: &ProgressBar) -> Result<()> {
         pb.println(format!("[*] Downloading tokenizer for {}...", name));
 
         let client = Client::builder().build()?;
@@ -224,13 +221,19 @@ impl AICounter {
     }
 
     pub fn count_tokens_raw(&self, text: &str) -> (usize, usize, usize) {
-        let gpt = self.tokenizers.get(&ModelKind::Gpt4oO1O3Mini)
+        let gpt = self
+            .tokenizers
+            .get(&ModelKind::Gpt4oO1O3Mini)
             .map(|t| Self::count_tokens_chunked(t, text))
             .unwrap_or(0);
-        let gemini = self.tokenizers.get(&ModelKind::GeminiGemma7b)
+        let gemini = self
+            .tokenizers
+            .get(&ModelKind::GeminiGemma7b)
             .map(|t| Self::count_tokens_chunked(t, text))
             .unwrap_or(0);
-        let claude = self.tokenizers.get(&ModelKind::Claude35SonnetOpus)
+        let claude = self
+            .tokenizers
+            .get(&ModelKind::Claude35SonnetOpus)
             .map(|t| Self::count_tokens_chunked(t, text))
             .unwrap_or(0);
         (gpt, gemini, claude)
@@ -249,13 +252,19 @@ impl AICounter {
         let words = text.split_whitespace().count();
         let chars = text.chars().count();
 
-        let gpt_count = self.tokenizers.get(&ModelKind::Gpt4oO1O3Mini)
+        let gpt_count = self
+            .tokenizers
+            .get(&ModelKind::Gpt4oO1O3Mini)
             .map(|t| Self::count_tokens_chunked(t, text))
             .unwrap_or(0);
-        let gemini_count = self.tokenizers.get(&ModelKind::GeminiGemma7b)
+        let gemini_count = self
+            .tokenizers
+            .get(&ModelKind::GeminiGemma7b)
             .map(|t| Self::count_tokens_chunked(t, text))
             .unwrap_or(0);
-        let claude_count = self.tokenizers.get(&ModelKind::Claude35SonnetOpus)
+        let claude_count = self
+            .tokenizers
+            .get(&ModelKind::Claude35SonnetOpus)
             .map(|t| Self::count_tokens_chunked(t, text))
             .unwrap_or(0);
 

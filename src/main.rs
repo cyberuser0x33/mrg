@@ -1,10 +1,12 @@
 mod commands;
 mod config;
+mod overview;
 mod tokenizer;
 mod utils;
-mod overview;
 
-use crate::commands::{CombineOptions, run_combine, run_file, run_init, run_structure, run_tokenize, run_get};
+use crate::commands::{
+    CombineOptions, run_combine, run_file, run_get, run_init, run_structure, run_tokenize,
+};
 use crate::utils::select_directory;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -116,7 +118,7 @@ fn parse_size_limit(s: &str) -> Result<u64> {
     if s.is_empty() {
         return Err(anyhow::anyhow!("Empty size limit"));
     }
-    
+
     let mut num_end = 0;
     for (i, c) in s.char_indices() {
         if c.is_ascii_digit() || c == '.' {
@@ -125,12 +127,14 @@ fn parse_size_limit(s: &str) -> Result<u64> {
             break;
         }
     }
-    
+
     let num_str = &s[..num_end];
     let suffix = s[num_end..].trim();
-    
-    let val: f64 = num_str.parse().map_err(|_| anyhow::anyhow!("Invalid number in size limit: {}", num_str))?;
-    
+
+    let val: f64 = num_str
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid number in size limit: {}", num_str))?;
+
     let bytes = match suffix {
         "B" | "" => val as u64,
         "KB" | "K" => (val * 1024.0) as u64,
@@ -222,9 +226,7 @@ fn main() -> Result<()> {
             };
             run_combine(dir, options)
         }
-        Some(Commands::Get { url, dir }) => {
-            run_get(&url, dir, options)
-        }
+        Some(Commands::Get { url, dir }) => run_get(&url, dir, options),
         Some(Commands::Update { dir }) => {
             let dir = match dir {
                 Some(d) => d,
@@ -257,4 +259,3 @@ mod tests {
         assert!(parse_size_limit("invalid").is_err());
     }
 }
-

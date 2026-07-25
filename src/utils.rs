@@ -697,21 +697,21 @@ pub fn match_pattern(rel_path: &str, pattern: &str) -> bool {
     if parts.is_empty() {
         return false;
     }
-    
+
     if pattern.starts_with('/') {
         // Directory pattern
         let dir_pattern = &pattern[1..];
         if dir_pattern.is_empty() {
             return false;
         }
-        
+
         // The directory components are all components except the last one (which is the file name)
         let dir_components = if parts.len() > 1 {
             &parts[..parts.len() - 1]
         } else {
             return false;
         };
-        
+
         for &comp in dir_components {
             if match_subpattern(comp, dir_pattern) {
                 return true;
@@ -756,7 +756,7 @@ mod tests {
         assert!(match_pattern("src/main-test.js", "main-*"));
         assert!(match_pattern("src/utils_n_helper.rs", "*n_*"));
         assert!(match_pattern("main.js", "main.js"));
-        
+
         // Directory patterns
         assert!(match_pattern("docs/index.md", "/docs"));
         assert!(match_pattern("src/styles/main.css", "/st*"));
@@ -764,5 +764,3 @@ mod tests {
         assert!(!match_pattern("src/main.rs", "/docs"));
     }
 }
-
-
