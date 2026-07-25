@@ -40,7 +40,7 @@ struct FileResult {
     gpt_tokens: usize,
     gemini_tokens: usize,
     claude_tokens: usize,
-    words: usize
+    words: usize,
     chars: usize,
 }
 
