@@ -3,7 +3,7 @@ use crate::tokenizer::AICounter;
 use crate::utils::{
     MaximizeFilters, ProcessingMode, TreeNode, format_file_size,
     get_current_timestamp, maximize_content, minify_content, select_mrg_file,
-    is_binary_file, clean_path_for_display,
+    is_binary_file, clean_path_for_display, match_pattern,
 };
 use anyhow::Result;
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
@@ -26,6 +26,8 @@ pub struct CombineOptions {
     pub pattern_max: Option<Vec<String>>,
     pub custom_project_name: Option<String>,
     pub custom_output_dir: Option<PathBuf>,
+    pub size_limit: Option<u64>,
+    pub only: Option<Vec<String>>,
 }
 
 thread_local! {
@@ -239,12 +241,19 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
     // 1. Parallel Scanning using WalkParallel
     let (tx, rx) = mpsc::channel();
     let mut builder = WalkBuilder::new(&dir);
-    builder.standard_filters(true);
-    builder.add_custom_ignore_filename(".mrgignore");
-
-    if Path::new(".mrgignore").exists() {
-        if let Some(e) = builder.add_ignore(".mrgignore") {
-            eprintln!("[!] Error loading .mrgignore: {}", e);
+    if options.only.is_some() {
+        builder.standard_filters(false);
+        builder.ignore(false);
+        builder.git_ignore(false);
+        builder.git_global(false);
+        builder.git_exclude(false);
+    } else {
+        builder.standard_filters(true);
+        builder.add_custom_ignore_filename(".mrgignore");
+        if Path::new(".mrgignore").exists() {
+            if let Some(e) = builder.add_ignore(".mrgignore") {
+                eprintln!("[!] Error loading .mrgignore: {}", e);
+            }
         }
     }
     let walker = builder.build_parallel();
@@ -279,19 +288,49 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
     let mut final_files = Vec::new();
     let mut user_ignored_count = 0;
 
+    let size_threshold = options.size_limit.unwrap_or(100 * 1024);
+    let size_limit_str = if options.size_limit.is_some() {
+        format_file_size(size_threshold)
+    } else {
+        "100 KB".to_string()
+    };
+
     for (path, rel_path, size) in files {
-        if size > 100 * 1024 && !options.ignore_size {
+        if let Some(ref patterns) = options.only {
+            let matched = patterns.iter().any(|pat| match_pattern(&rel_path, pat));
+            if !matched {
+                continue;
+            }
+        }
+
+        if size > size_threshold && !options.ignore_size {
             let size_str = format_file_size(size);
-            let confirm = Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt(format!(
-                    "File {} is larger than 100 KB ({}). Include it?",
-                    rel_path, size_str
-                ))
-                .default(false)
-                .interact()
-                .map_err(anyhow::Error::from)
-                .or_else(crate::utils::handle_interact_error)?;
-            if !confirm {
+            let mut choice = 'o';
+            while choice == 'o' {
+                choice = prompt_large_file(&rel_path, &size_str, &size_limit_str)?;
+                if choice == 'o' {
+                    let ext = Path::new(&rel_path)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    match crate::overview::show_viewer(&path, &rel_path, ext) {
+                        Ok(crate::overview::ViewResult::Include) => {
+                            choice = 'y';
+                        }
+                        Ok(crate::overview::ViewResult::Exclude) => {
+                            choice = 'n';
+                        }
+                        Ok(crate::overview::ViewResult::Back) => {
+                            choice = 'o';
+                        }
+                        Err(e) => {
+                            eprintln!("[!] Error in overview viewer: {}", e);
+                            choice = 'n';
+                        }
+                    }
+                }
+            }
+            if choice == 'n' {
                 user_ignored_count += 1;
                 continue;
             }
@@ -302,8 +341,24 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
     let total_ignored_count = user_ignored_count;
 
     // 3. Reconstruct tree structure
+    let mut final_dirs = Vec::new();
+    if options.only.is_some() {
+        for (_, rel_path) in &dirs {
+            let is_prefix = final_files.iter().any(|(_, f_rel)| {
+                f_rel.starts_with(&format!("{}/", rel_path))
+            });
+            if is_prefix {
+                final_dirs.push(rel_path.clone());
+            }
+        }
+    } else {
+        for (_, rel_path) in &dirs {
+            final_dirs.push(rel_path.clone());
+        }
+    }
+
     let mut root_tree = TreeNode::new(root_name.clone(), true);
-    for (_, rel_path) in &dirs {
+    for rel_path in &final_dirs {
         root_tree.insert(Path::new(rel_path), true);
     }
     for (_, rel_path) in &final_files {
@@ -312,6 +367,7 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
     root_tree.sort();
     let mut tree_lines = Vec::new();
     root_tree.build_lines("", &mut tree_lines);
+
 
     // Initialize Tokenizer (load_all = false)
     let ai_counter =
@@ -831,3 +887,34 @@ fn extract_project_name(url: &str) -> String {
         trimmed.to_string()
     }
 }
+
+fn prompt_large_file(rel_path: &str, size_str: &str, limit_str: &str) -> Result<char> {
+    use console::Term;
+    let term = Term::stdout();
+    loop {
+        term.write_str(&format!(
+            "File {} is larger than {} ({}). Include it? [y/n/o] (y: yes, n: no, o: overview): ",
+            rel_path, limit_str, size_str
+        ))?;
+        term.flush()?;
+        let key = term.read_key()?;
+        match key {
+            console::Key::Char('y') | console::Key::Char('Y') => {
+                term.write_line("y")?;
+                return Ok('y');
+            }
+            console::Key::Char('n') | console::Key::Char('N') => {
+                term.write_line("n")?;
+                return Ok('n');
+            }
+            console::Key::Char('o') | console::Key::Char('O') => {
+                term.write_line("o")?;
+                return Ok('o');
+            }
+            _ => {
+                term.write_line("")?;
+            }
+        }
+    }
+}
+

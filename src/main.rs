@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod tokenizer;
 mod utils;
+mod overview;
 
 use crate::commands::{CombineOptions, run_combine, run_file, run_init, run_structure, run_tokenize, run_get};
 use crate::utils::select_directory;
@@ -25,8 +26,16 @@ struct Cli {
     get: Option<Vec<String>>,
 
     /// Show project structure (shortcut for structure subcommand)
-    #[arg(short = 's', long = "structure")]
+    #[arg(short = 'S', long = "structure")]
     structure: bool,
+
+    /// Set custom file size warning limit (e.g. 50b, 100kb, 2mb, 1gb)
+    #[arg(short = 's', long = "size", value_name = "LIMIT", global = true)]
+    size: Option<String>,
+
+    /// Only include files matching these patterns, ignoring all others
+    #[arg(short = 'o', long = "only", num_args(1..), value_name = "PATTERNS", global = true)]
+    only: Option<Vec<String>>,
 
     /// Show merged file contents (shortcut for file subcommand)
     #[arg(short = 'f', long = "file")]
@@ -102,8 +111,50 @@ enum Commands {
     },
 }
 
+fn parse_size_limit(s: &str) -> Result<u64> {
+    let s = s.trim().to_uppercase();
+    if s.is_empty() {
+        return Err(anyhow::anyhow!("Empty size limit"));
+    }
+    
+    let mut num_end = 0;
+    for (i, c) in s.char_indices() {
+        if c.is_ascii_digit() || c == '.' {
+            num_end = i + c.len_utf8();
+        } else {
+            break;
+        }
+    }
+    
+    let num_str = &s[..num_end];
+    let suffix = s[num_end..].trim();
+    
+    let val: f64 = num_str.parse().map_err(|_| anyhow::anyhow!("Invalid number in size limit: {}", num_str))?;
+    
+    let bytes = match suffix {
+        "B" | "" => val as u64,
+        "KB" | "K" => (val * 1024.0) as u64,
+        "MB" | "M" => (val * 1024.0 * 1024.0) as u64,
+        "GB" | "G" => (val * 1024.0 * 1024.0 * 1024.0) as u64,
+        _ => return Err(anyhow::anyhow!("Unknown size limit suffix: {}", suffix)),
+    };
+    Ok(bytes)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    let size_limit = if let Some(ref s) = cli.size {
+        match parse_size_limit(s) {
+            Ok(limit) => Some(limit),
+            Err(e) => {
+                eprintln!("[!] Error parsing size limit: {}", e);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
 
     let options = CombineOptions {
         is_update: false,
@@ -116,6 +167,8 @@ fn main() -> Result<()> {
         pattern_max: cli.pattern_max.clone(),
         custom_project_name: None,
         custom_output_dir: None,
+        size_limit,
+        only: cli.only.clone(),
     };
 
     // Handle shortcuts
@@ -189,3 +242,19 @@ fn main() -> Result<()> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_size_limit() {
+        assert_eq!(parse_size_limit("100b").unwrap(), 100);
+        assert_eq!(parse_size_limit("100 B").unwrap(), 100);
+        assert_eq!(parse_size_limit("1.5kb").unwrap(), 1536);
+        assert_eq!(parse_size_limit("2mb").unwrap(), 2097152);
+        assert_eq!(parse_size_limit("1GB").unwrap(), 1073741824);
+        assert!(parse_size_limit("invalid").is_err());
+    }
+}
+

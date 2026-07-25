@@ -1,6 +1,6 @@
 [package]
 name = "mrgfile"
-version = "0.1.10"
+version = "0.1.11"
 edition = "2024"
 authors = ["cyberuser0x33 <cyberuser0x33@protonmail.com>"]
 description = "A fast CLI tool to merge project files into a single structured document optimized for LLM context (AI analysis)."
@@ -18,6 +18,7 @@ hex = "0.4"
 ignore = "0.4"
 anyhow = "1.0"
 dialoguer = "0.11"
+console = "0.15"
 chrono = "0.4.45"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "default-tls"] }
 tokenizers = "0.23.1"

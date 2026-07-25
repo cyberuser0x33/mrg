@@ -691,3 +691,78 @@ pub fn clean_path_for_display(path: &Path) -> String {
     }
     s.replace('\\', "/")
 }
+
+pub fn match_pattern(rel_path: &str, pattern: &str) -> bool {
+    let parts: Vec<&str> = rel_path.split('/').collect();
+    if parts.is_empty() {
+        return false;
+    }
+    
+    if pattern.starts_with('/') {
+        // Directory pattern
+        let dir_pattern = &pattern[1..];
+        if dir_pattern.is_empty() {
+            return false;
+        }
+        
+        // The directory components are all components except the last one (which is the file name)
+        let dir_components = if parts.len() > 1 {
+            &parts[..parts.len() - 1]
+        } else {
+            return false;
+        };
+        
+        for &comp in dir_components {
+            if match_subpattern(comp, dir_pattern) {
+                return true;
+            }
+        }
+        false
+    } else {
+        // File pattern - matches the file name (the last component)
+        let file_name = parts[parts.len() - 1];
+        match_subpattern(file_name, pattern)
+    }
+}
+
+fn match_subpattern(text: &str, pat: &str) -> bool {
+    if pat.starts_with('*') && pat.ends_with('*') {
+        if pat.len() <= 2 {
+            true
+        } else {
+            let inner = &pat[1..pat.len() - 1];
+            text.contains(inner)
+        }
+    } else if pat.starts_with('*') {
+        let suffix = &pat[1..];
+        text.ends_with(suffix)
+    } else if pat.ends_with('*') {
+        let prefix = &pat[..pat.len() - 1];
+        text.starts_with(prefix)
+    } else {
+        text == pat
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_match_pattern() {
+        // File patterns
+        assert!(match_pattern("src/main.rs", "*.rs"));
+        assert!(!match_pattern("src/main.rs", "*.js"));
+        assert!(match_pattern("src/main-test.js", "main-*"));
+        assert!(match_pattern("src/utils_n_helper.rs", "*n_*"));
+        assert!(match_pattern("main.js", "main.js"));
+        
+        // Directory patterns
+        assert!(match_pattern("docs/index.md", "/docs"));
+        assert!(match_pattern("src/styles/main.css", "/st*"));
+        assert!(match_pattern("src/init_db/main.rs", "/*init*"));
+        assert!(!match_pattern("src/main.rs", "/docs"));
+    }
+}
+
+

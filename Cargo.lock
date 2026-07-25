@@ -1302,13 +1302,14 @@ dependencies = [
 
 [[package]]
 name = "mrgfile"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
  "aws-lc-sys",
  "chrono",
  "clap",
+ "console 0.15.11",
  "dialoguer",
  "dirs",
  "git2",

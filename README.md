@@ -99,7 +99,7 @@ You can pass these flags alongside subcommands or use them directly as shortcuts
 - `-c, --combine [DIR]` — Shortcut for the `combine` subcommand.
 - `-g, --get <URL> [DIR]` — Shortcut for the `get` subcommand.
 - `-u, --update [DIR]` — Shortcut for the `update` subcommand.
-- `-s, --structure` — Shortcut for the `structure` subcommand.
+- `-S, --structure` — Shortcut for the `structure` subcommand (Note: changed to capital `-S` to make room for `-s` size flag).
 - `-f, --file` — Shortcut for the `file` subcommand.
 
 ### 🧬 Processing Mode Settings
@@ -118,7 +118,14 @@ You can pass these flags alongside subcommands or use them directly as shortcuts
   - `500000` (raw integer value)
   *(Default is `500K` when split checks trigger)*
 - `--notsplit` — Disables splitting checks entirely, writing the entire codebase into a single file (takes precedence over `--split`).
-- `-i, --ignore` — Ignores size checks for individual files. By default, `mrg` will ask for confirmation before merging files larger than 100 KB.
+
+### 📦 Size Limits & Inclusion Filters (New!)
+- `-s, --size [LIMIT]` — Sets a custom file size warning limit (e.g. `50b`, `150kb`, `2mb`, `1gb`). By default, the limit is `100 KB`.
+- `-i, --ignore` — Ignores size checks for individual files. By default, `mrg` will ask for confirmation (`[y/n/o]`) before merging files larger than `100 KB` (or the limit set by `--size`).
+  - Pressing `o` (Overview) opens an interactive, scrollable terminal-based read-only pager with basic syntax highlighting (for Rust, Go, Python, and JavaScript/TypeScript) so you can inspect the file contents before choosing to include (`y`) or exclude (`n`) it.
+- `-o, --only [PATTERNS]...` — Combines **ONLY** files matching specific patterns, ignoring all others completely (regardless of `.mrgignore` or `.gitignore` rules).
+  - You can specify file names (`main.js`), extensions (`*.js`), prefixes (`main-*`), substrings (`*n_*`), or directories starting with `/` (`/docs`, `/st*`, `/*init*`).
+  - *Example:* `mrg combine -o *.md example* /docs /*init*`
 
 ---
 
