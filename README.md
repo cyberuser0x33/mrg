@@ -8,7 +8,9 @@
 
 - 📂 **Interactive Directory Selection**: Automatically detects and prompts you to select project directories and merge files interactively.
 - 🌳 **Project Directory Tree**: Prepends a clean, formatted folder structure tree to the output file.
-- 🧮 **Token Counting**: Displays real-time, accurate token counts for **GPT-4o**, **Gemini**, and **Claude** models using their official tokenizers (vocabulary files are downloaded and cached automatically on the first run).
+- 🧮 **Token Counting**: Displays real-time, accurate token counts for **16 AI models** (GPT-4o, Gemini, Claude, DeepSeek, Qwen, LLaMA, Mistral, Phi, Cohere, GLM, MiniMax, Gemma, Kimi and more) using their official tokenizers (vocabulary files are downloaded and cached automatically on the first run).
+- 🔍 **Interactive Tokenization (`-t`)**: Select a single model from an interactive list and tokenize a file through it.
+- 📊 **Batch Tokenization (`--tb`)**: Tokenize a file through all 16 models at once with a progress bar and get results in a sorted ASCII table.
 - 🧬 **Code Processing Modes**:
   - 📝 **Full** (default): Copies file contents entirely without changes.
   - ⚡ **Minify**: Strips comments and unnecessary whitespace to conserve tokens.
@@ -101,6 +103,8 @@ You can pass these flags alongside subcommands or use them directly as shortcuts
 - `-u, --update [DIR]` — Shortcut for the `update` subcommand.
 - `-S, --structure` — Shortcut for the `structure` subcommand (Note: changed to capital `-S` to make room for `-s` size flag).
 - `-f, --file` — Shortcut for the `file` subcommand.
+- `-t, --tokenize [FILE]` — Interactively select a single tokenizer model and tokenize the specified file (or the most recent `mrg-*.txt` file).
+- `--tb [FILE]` — Tokenize the file through **all 16 models** at once. Displays a progress bar during processing and outputs results as a sorted ASCII table (ascending by token count).
 
 ### 🧬 Processing Mode Settings
 - `-p, --pattern` — Interactively prompts you to select a processing pattern (`Full`, `Minify`, or `Maximize`) before merging.
@@ -186,11 +190,68 @@ Claude3.5-Sonnet-Opus: ~340
 
 ---
 
-## 📈 Tokenization Comparison
+## 📈 Tokenization Commands
+
+### `-t` — Interactive Single Model Tokenization
+
+Select one tokenizer from an interactive list using arrow keys, then tokenize the file through that model only:
+
+```bash
+mrg -t mrg-my_project.txt
+```
+
+```text
+? Select a tokenizer model: ›
+❯ GPT4-O1-O3-Mini
+  GPT4-Turbo-GPT3.5-Turbo
+  Gemini-Gemma7B
+  Claude3.5-Sonnet-Opus
+  LLAMA3-3.1-3.2
+  DeepSeekV2-V3-R1
+  DeepSeek-V4-Flash-Pro
+  DeepSeek-3.2-3.2Exp
+  Mistral-Codestral
+  Phi3-Phi4
+  Cohere-CommandR-R+
+  GLM-5.2-5.1-5.0-4.7Flash
+  Qwen3.6-3.7-3.7Max-3.7Plus
+  MiniMax-M3
+  Gemma-4-31B
+  Kimi-K3
+```
+
+### `--tb` — Batch Tokenization (ASCII Table)
+
+```bash
+mrg --tb mrg-my_project.txt
+```
+
+### Tokenization Comparison
 
 Below is a diagram comparing tokenization statistics across the different supported models:
 
-![Tokenization Comparison Diagram](diagram.png)
+```text
+┌────────────────────────────┬─────────┐                                                              
+│ Model                      │ Tokens  │
+├────────────────────────────┼─────────┤
+│ Kimi-K3                    │ ~32,849 │
+│ LLAMA3-3.1-3.2             │ ~32,887 │
+│ GLM-5.2-5.1-5.0-4.7Flash   │ ~32,888 │
+│ GPT4-Turbo-GPT3.5-Turbo    │ ~32,894 │
+│ MiniMax-M3                 │ ~32,926 │
+│ GPT4-O1-O3-Mini            │ ~32,993 │
+│ DeepSeekV2-V3-R1           │ ~35,419 │
+│ DeepSeek-V4-Flash-Pro      │ ~35,419 │
+│ DeepSeek-3.2-3.2Exp        │ ~35,419 │
+│ Qwen3.6-3.7-3.7Max-3.7Plus │ ~36,015 │
+│ Claude3.5-Sonnet-Opus      │ ~37,215 │
+│ Cohere-CommandR-R+         │ ~37,247 │
+│ Gemini-Gemma7B             │ ~39,355 │
+│ Gemma-4-31B                │ ~39,637 │
+│ Mistral-Codestral          │ ~42,625 │
+│ Phi3-Phi4                  │ ~43,003 │
+└────────────────────────────┴─────────┘
+```
 
 ---
 

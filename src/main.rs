@@ -6,6 +6,7 @@ mod utils;
 
 use crate::commands::{
     CombineOptions, run_combine, run_file, run_get, run_init, run_structure, run_tokenize,
+    run_tokenize_batch,
 };
 use crate::utils::select_directory;
 use anyhow::Result;
@@ -47,9 +48,13 @@ struct Cli {
     #[arg(short = 'u', long = "update", value_name = "DIR")]
     update: Option<Option<PathBuf>>,
 
-    /// Tokenize a file using all available tokenizers
+    /// Tokenize a file using a selected tokenizer (interactive model selection)
     #[arg(short = 't', long = "tokenize", value_name = "FILE", num_args(0..=1))]
     tokenize: Option<Option<PathBuf>>,
+
+    /// Tokenize a file using all available tokenizers (batch ASCII table)
+    #[arg(long = "tb", value_name = "FILE", num_args(0..=1))]
+    tokenize_batch: Option<Option<PathBuf>>,
 
     /// Split option: if token limit is exceeded, split into parts. Value for limit (e.g. 350K, 1.2M, default 500K)
     #[arg(long = "split", value_name = "LIMIT", default_missing_value = "500K", num_args = 0..=1, global = true)]
@@ -176,6 +181,14 @@ fn main() -> Result<()> {
     };
 
     // Handle shortcuts
+    if let Some(tokenize_batch_opt) = cli.tokenize_batch {
+        let file_path = match tokenize_batch_opt {
+            Some(path) => Some(path),
+            None => None,
+        };
+        return run_tokenize_batch(file_path);
+    }
+
     if let Some(tokenize_opt) = cli.tokenize {
         let file_path = match tokenize_opt {
             Some(path) => Some(path),

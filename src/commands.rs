@@ -30,10 +30,6 @@ pub struct CombineOptions {
     pub only: Option<Vec<String>>,
 }
 
-thread_local! {
-    static LOCAL_COUNTER: std::cell::Cell<usize> = std::cell::Cell::new(0);
-}
-
 struct FileResult {
     rel_path: String,
     content: String,
@@ -42,6 +38,7 @@ struct FileResult {
     claude_tokens: usize,
     words: usize,
     chars: usize,
+    is_unsupported: bool,
 }
 
 // ignore visitor implementation
@@ -385,18 +382,19 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
             .progress_chars("▰▰▱"),
     );
 
-    let batch_size = if final_files.len() > 200 { 20 } else { 1 };
-
     let processed_files: Vec<FileResult> = final_files
         .par_iter()
         .map(|(path, rel_path)| {
-            let mut file_content = match fs::read_to_string(path) {
-                Ok(c) => c,
-                Err(_) => "non supported data, skipped\n".to_string(),
+            let (mut file_content, is_unsupported) = match fs::read_to_string(path) {
+                Ok(c) => (c, false),
+                Err(_) => ("non supported data, skipped\n".to_string(), true),
             };
 
-            let mode = if global_mode == ProcessingMode::Maximize {
-                if maximize_filters.matches(rel_path) {
+            let mode = if is_unsupported{
+              ProcessingMode::Full
+              
+            } else if global_mode == ProcessingMode::Maximize{
+                if maximize_filters.matches(rel_path){
                     ProcessingMode::Maximize
                 } else {
                     ProcessingMode::Full
@@ -427,24 +425,17 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
             let words = file_block.split_whitespace().count();
             let chars = file_block.chars().count();
 
-            LOCAL_COUNTER.with(|cell| {
-                let val = cell.get() + 1;
-                if val >= batch_size {
-                    pb.inc(batch_size as u64);
-                    cell.set(0);
-                } else {
-                    cell.set(val);
-                }
-            });
-
+            pb.inc(1);
+          
             FileResult {
                 rel_path: rel_path.clone(),
-                content: file_content,
+                  content: file_content,
                 gpt_tokens: gpt,
                 gemini_tokens: gemini,
                 claude_tokens: claude,
                 words,
                 chars,
+                is_unsupported,
             }
         })
         .collect();
@@ -454,6 +445,21 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
     // Sort to ensure determinism
     let mut processed_files = processed_files;
     processed_files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
+
+    let unsupported_files: Vec<&str> = processed_files
+        .iter()
+        .filter(|f| f.is_unsupported)
+        .map(|f| f.rel_path.as_str())
+        .collect();
+    if !unsupported_files.is_empty(){
+        eprintln!(
+            "[!] {} file(s) could not be read as valid UTF-8 text",
+            unsupported_files.len()
+        );
+        for path in &unsupported_files{
+            eprintln!("    - {}", path);
+        }
+    }
 
     let version = env!("CARGO_PKG_VERSION");
     let timestamp = get_current_timestamp();
@@ -532,7 +538,10 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
         format_file_size(final_size)
     );
     println!("[*] Files merged: {}", format_count(processed_files.len()));
-    println!("[*] Files ignored: {}", format_count(total_ignored_count));
+    println!("[*] Files ignored (size limit): {}", format_count(total_ignored_count));
+      if !unsupported_files.is_empty() {
+      println!("[*] Files unsupported (binary/non-UTF8): {}", format_count(unsupported_files.len()));
+    }
 
     println!(
         "Words: {}, Characters: {}",
@@ -755,9 +764,9 @@ pub fn run_structure() -> Result<()> {
     let content = fs::read_to_string(file_path)?;
 
     if let Some(pos) = content.find("**********") {
-        let after_sep = &content[pos + 10..].trim_start();
-        if let Some(end_pos) = after_sep.find("==========") {
-            println!("{}", &after_sep[..end_pos]);
+        let after_sep = content[pos + 10..].trim_start();
+        if let Some(end_pos) = after_sep.find("=== start ") {
+            println!("{}", after_sep[..end_pos].trim_end());
         } else {
             println!("{}", after_sep);
         }
@@ -772,9 +781,9 @@ pub fn run_file() -> Result<()> {
     let content = fs::read_to_string(file_path)?;
 
     if let Some(pos) = content.find("**********") {
-        let after_sep = &content[pos + 10..].trim_start();
-        if let Some(end_pos) = after_sep.find("==========") {
-            println!("{}", &after_sep[end_pos + 30..].trim_start());
+        let after_sep = content[pos + 10..].trim_start();
+        if let Some(start_pos) = after_sep.find("=== start ") {
+            println!("{}", &after_sep[start_pos..]);
         } else {
             println!("{}", after_sep);
         }
@@ -801,57 +810,153 @@ pub fn run_tokenize(file_path: Option<PathBuf>) -> Result<()> {
         anyhow::bail!("Error: Cannot tokenize binary file.");
     }
 
+    // Show interactive model selection
+    let model_names: Vec<&str> = crate::tokenizer::SUPPORTED_MODELS
+        .iter()
+        .map(|m| m.display_name)
+        .collect();
+
+    let selection = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Select a tokenizer model:")
+        .items(&model_names)
+        .default(0)
+        .interact()
+        .map_err(anyhow::Error::from)
+        .or_else(crate::utils::handle_interact_error)?;
+
+    let selected_model = &crate::tokenizer::SUPPORTED_MODELS[selection];
+
+    let file_content = fs::read_to_string(&target_path)?;
+    println!(
+        "[*] Tokenizing file: {} (using {})",
+        clean_path_for_display(&target_path),
+        selected_model.display_name
+    );
+
+    // Initialize only the selected tokenizer
+    let ai_counter = AICounter::new_single("AItokenizers", selected_model.kind)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let counts = ai_counter.count_tokens_all(&file_content);
+    let count = counts
+        .get(&selected_model.kind)
+        .copied()
+        .unwrap_or(0);
+
+    println!(
+        "\n{}: ~{}",
+        selected_model.display_name,
+        format_count(count)
+    );
+
+    Ok(())
+}
+
+pub fn run_tokenize_batch(file_path: Option<PathBuf>) -> Result<()> {
+    let target_path = match file_path {
+        Some(path) => path,
+        None => select_mrg_file()?,
+    };
+
+    if !target_path.exists() {
+        anyhow::bail!(
+            "Error: File {} does not exist.",
+            clean_path_for_display(&target_path)
+        );
+    }
+
+    if is_binary_file(&target_path)? {
+        anyhow::bail!("Error: Cannot tokenize binary file.");
+    }
+
     let file_content = fs::read_to_string(&target_path)?;
     println!(
         "[*] Tokenizing file: {}",
         clean_path_for_display(&target_path)
     );
 
-    // Initialize all 10 tokenizers
+    // Initialize all tokenizers
     let ai_counter = AICounter::new("AItokenizers", true).map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let counts = ai_counter.count_tokens_all(&file_content);
+    // Tokenize through each model with a progress bar
+    let models = crate::tokenizer::SUPPORTED_MODELS;
+    let pb = ProgressBar::new(models.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "[{elapsed_precise}] [{bar:40.magenta/white}] Tokenizing {pos}/{len} models... {msg}",
+            )
+            .unwrap()
+            .progress_chars("▰▰▱"),
+    );
 
-    println!("\nToken Statistics for all models:");
-
-    let display_order = [
-        (
-            crate::tokenizer::ModelKind::Gpt4oO1O3Mini,
-            "GPT4-O1-O3-Mini:",
-        ),
-        (
-            crate::tokenizer::ModelKind::Gpt4TurboGpt35Turbo,
-            "GPT4-Turbo-GPT3.5-Turbo:",
-        ),
-        (
-            crate::tokenizer::ModelKind::GeminiGemma7b,
-            "Gemini-Gemma7B:",
-        ),
-        (
-            crate::tokenizer::ModelKind::Claude35SonnetOpus,
-            "Claude3.5-Sonnet-Opus:",
-        ),
-        (crate::tokenizer::ModelKind::Llama32, "LLAMA3-3.1-3.2:"),
-        (
-            crate::tokenizer::ModelKind::DeepSeekV2V3R1,
-            "DeepSeekV2-V3-R1:",
-        ),
-        (crate::tokenizer::ModelKind::Qwen25Coder, "Qwen2.5-Coder:"),
-        (
-            crate::tokenizer::ModelKind::MistralCodestral,
-            "Mistral-Codestral:",
-        ),
-        (crate::tokenizer::ModelKind::Phi3Phi4, "Phi3-Phi4:"),
-        (
-            crate::tokenizer::ModelKind::CohereCommandRPlus,
-            "Cohere-CommandR-R+:",
-        ),
-    ];
-
-    for &(kind, label) in &display_order {
-        let count = counts.get(&kind).copied().unwrap_or(0);
-        println!("{} ~{}", label, format_count(count));
+    let mut results: Vec<(&str, usize)> = Vec::with_capacity(models.len());
+    for model in models {
+        pb.set_message(model.display_name);
+        let count = ai_counter.count_tokens_for(model.kind, &file_content);
+        results.push((model.display_name, count));
+        pb.inc(1);
     }
+    pb.finish_with_message("Done!");
+
+    // Sort ascending (smallest first, largest at bottom)
+    results.sort_by_key(|&(_, count)| count);
+
+    // Calculate column widths
+    let model_header = "Model";
+    let tokens_header = "Tokens";
+    let max_model_width = results
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
+        .unwrap_or(0)
+        .max(model_header.len());
+    let max_tokens_width = results
+        .iter()
+        .map(|(_, count)| format!("~{}", format_count(*count)).len())
+        .max()
+        .unwrap_or(0)
+        .max(tokens_header.len());
+
+    // Print ASCII table
+    println!();
+    // Top border
+    println!(
+        "┌─{}─┬─{}─┐",
+        "─".repeat(max_model_width),
+        "─".repeat(max_tokens_width)
+    );
+    // Header
+    println!(
+        "│ {:<width_m$} │ {:<width_t$} │",
+        model_header,
+        tokens_header,
+        width_m = max_model_width,
+        width_t = max_tokens_width
+    );
+    // Separator
+    println!(
+        "├─{}─┼─{}─┤",
+        "─".repeat(max_model_width),
+        "─".repeat(max_tokens_width)
+    );
+    // Data rows
+    for (name, count) in &results {
+        let token_str = format!("~{}", format_count(*count));
+        println!(
+            "│ {:<width_m$} │ {:>width_t$} │",
+            name,
+            token_str,
+            width_m = max_model_width,
+            width_t = max_tokens_width
+        );
+    }
+    // Bottom border
+    println!(
+        "└─{}─┴─{}─┘",
+        "─".repeat(max_model_width),
+        "─".repeat(max_tokens_width)
+    );
 
     Ok(())
 }

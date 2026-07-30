@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use tokenizers::tokenizer::Tokenizer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(non_camel_case_types)]
 pub enum ModelKind {
     Gpt4oO1O3Mini,
     Gpt4TurboGpt35Turbo,
@@ -14,10 +15,16 @@ pub enum ModelKind {
     Claude35SonnetOpus,
     Llama32,
     DeepSeekV2V3R1,
-    Qwen25Coder,
+    DeepSeekV4FlashPro,
+    DeepSeek32Exp,
     MistralCodestral,
     Phi3Phi4,
     CohereCommandRPlus,
+    Glm52_51_50_47Flash,
+    Qwen36_37_37Max_37Plus,
+    MiniMaxM3,
+    Gemma4_31b,
+    KimiK3,
 }
 
 pub struct ModelInfo {
@@ -65,10 +72,16 @@ pub const SUPPORTED_MODELS: &[ModelInfo] = &[
         filename: "deepseek_v2_v3_r1.json",
     },
     ModelInfo {
-        kind: ModelKind::Qwen25Coder,
-        display_name: "Qwen2.5-Coder",
-        remote_url: "https://huggingface.co/datasets/cyberuser0x33/model-tokenizers/resolve/main/tokenizers/qwen2.5_coder.json",
-        filename: "qwen2.5_coder.json",
+        kind: ModelKind::DeepSeekV4FlashPro,
+        display_name: "DeepSeek-V4-Flash-Pro",
+        remote_url: "https://huggingface.co/datasets/cyberuser0x33/model-tokenizers/resolve/main/tokenizers/deepseek_v4-flash_pro.json",
+        filename: "deepseek_v4-flash_pro.json",
+    },
+    ModelInfo {
+        kind: ModelKind::DeepSeek32Exp,
+        display_name: "DeepSeek-3.2-3.2Exp",
+        remote_url: "https://huggingface.co/datasets/cyberuser0x33/model-tokenizers/resolve/main/tokenizers/deepseek-3.2_3.2exp.json",
+        filename: "deepseek-3.2_3.2exp.json",
     },
     ModelInfo {
         kind: ModelKind::MistralCodestral,
@@ -87,6 +100,36 @@ pub const SUPPORTED_MODELS: &[ModelInfo] = &[
         display_name: "Cohere-CommandR-R+",
         remote_url: "https://huggingface.co/datasets/cyberuser0x33/model-tokenizers/resolve/main/tokenizers/cohere_command_r_r%2B.json",
         filename: "cohere_command_r_r_plus.json",
+    },
+    ModelInfo {
+        kind: ModelKind::Glm52_51_50_47Flash,
+        display_name: "GLM-5.2-5.1-5.0-4.7Flash",
+        remote_url: "https://huggingface.co/datasets/cyberuser0x33/model-tokenizers/resolve/main/tokenizers/glm-5.2_5.1_5.0_4.7flash.json",
+        filename: "glm-5.2_5.1_5.0_4.7flash.json",
+    },
+    ModelInfo {
+        kind: ModelKind::Qwen36_37_37Max_37Plus,
+        display_name: "Qwen3.6-3.7-3.7Max-3.7Plus",
+        remote_url: "https://huggingface.co/datasets/cyberuser0x33/model-tokenizers/resolve/main/tokenizers/qwen3.6_3.7_3.7max_3.7plus.json",
+        filename: "qwen3.6_3.7_3.7max_3.7plus.json",
+    },
+    ModelInfo {
+        kind: ModelKind::MiniMaxM3,
+        display_name: "MiniMax-M3",
+        remote_url: "https://huggingface.co/datasets/cyberuser0x33/model-tokenizers/resolve/main/tokenizers/minimax-m3.json",
+        filename: "minimax-m3.json",
+    },
+    ModelInfo {
+        kind: ModelKind::Gemma4_31b,
+        display_name: "Gemma-4-31B",
+        remote_url: "https://huggingface.co/datasets/cyberuser0x33/model-tokenizers/resolve/main/tokenizers/gemma-4-31b.json",
+        filename: "gemma-4-31b.json",
+    },
+    ModelInfo {
+        kind: ModelKind::KimiK3,
+        display_name: "Kimi-K3",
+        remote_url: "https://huggingface.co/datasets/cyberuser0x33/model-tokenizers/resolve/main/tokenizers/kimi-k3.json",
+        filename: "kimi-k3.json",
     },
 ];
 
@@ -169,6 +212,65 @@ impl AICounter {
         Ok(Self { tokenizers })
     }
 
+    /// Creates an AICounter that downloads all missing tokenizer files,
+    /// but only loads a single specific model into memory.
+    pub fn new_single(folder_name: &str, target_kind: ModelKind) -> Result<Self> {
+        let base_dir =
+            dirs::data_local_dir().ok_or_else(|| anyhow!("Local data directory not found"))?;
+        let tokenizers_dir = base_dir.join("mrgfile").join(folder_name);
+
+        if !tokenizers_dir.exists() {
+            fs::create_dir_all(&tokenizers_dir)?;
+        }
+
+        // Determine which models need to be downloaded
+        let mut to_download = Vec::new();
+        for model in SUPPORTED_MODELS {
+            let path = tokenizers_dir.join(model.filename);
+            if !path.exists() {
+                to_download.push((model, path));
+            }
+        }
+
+        if !to_download.is_empty() {
+            let pb = ProgressBar::new(to_download.len() as u64);
+            pb.set_style(
+                ProgressStyle::default_bar()
+                    .template(
+                        "[{elapsed_precise}] [{bar:40.cyan/white}] Downloading tokenizers {pos}/{len}... {msg}",
+                    )
+                    .unwrap()
+                    .progress_chars("▰▰▱"),
+            );
+            for (model, path) in to_download {
+                pb.set_message(model.display_name);
+                Self::download_tokenizer(model.display_name, model.remote_url, &path, &pb)?;
+                pb.inc(1);
+            }
+            pb.finish_with_message("All tokenizers downloaded!");
+        }
+
+        let mut tokenizers = std::collections::HashMap::new();
+        // Load only the target model
+        for model in SUPPORTED_MODELS {
+            if model.kind == target_kind {
+                let path = tokenizers_dir.join(model.filename);
+                let t = Tokenizer::from_file(&path).map_err(|e| {
+                    let _ = fs::remove_file(&path);
+                    anyhow!(
+                        "Dictionary error {}: {}. File was deleted, please try again.",
+                        model.display_name,
+                        e
+                    )
+                })?;
+                tokenizers.insert(model.kind, t);
+                break;
+            }
+        }
+
+        Ok(Self { tokenizers })
+    }
+
     fn download_tokenizer(name: &str, url: &str, path: &PathBuf, pb: &ProgressBar) -> Result<()> {
         pb.println(format!("[*] Downloading tokenizer for {}...", name));
 
@@ -245,6 +347,13 @@ impl AICounter {
             counts.insert(*kind, Self::count_tokens_chunked(tokenizer, text));
         }
         counts
+    }
+
+    pub fn count_tokens_for(&self, kind: ModelKind, text: &str) -> usize {
+        self.tokenizers
+            .get(&kind)
+            .map(|t| Self::count_tokens_chunked(t, text))
+            .unwrap_or(0)
     }
 
     #[allow(dead_code)]
