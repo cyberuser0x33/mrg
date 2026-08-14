@@ -272,7 +272,7 @@ impl AICounter {
     }
 
     fn download_tokenizer(name: &str, url: &str, path: &PathBuf, pb: &ProgressBar) -> Result<()> {
-        pb.println(format!("[*] Downloading tokenizer for {}...", name));
+        pb.set_message(format!("Downloading {}...", name));
 
         let client = Client::builder().build()?;
         let response = client

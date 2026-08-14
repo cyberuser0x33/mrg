@@ -108,7 +108,7 @@ pub fn highlight_line(line: &str, ext: &str) -> String {
 }
 
 fn highlight_c_like(line: &str, keywords: &[&str], types: &[&str]) -> String {
-    let mut output = String::new();
+    let mut output = String::with_capacity(line.len() + line.len() / 2);
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
 

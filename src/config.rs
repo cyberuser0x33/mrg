@@ -67,6 +67,8 @@ android/.gradle/
 fastlane/
 .flutter-plugins
 .pub-cache/
+LICENSE
+LICENSE.txt
 
 # === BINARY AND LARGE FILES ===
 *.pyc
@@ -104,6 +106,7 @@ fastlane/
 *.mp3
 *.ttf
 *.woff*
+*.xlsx  
 
 # === LOGS AND NOISE ===
 *.log

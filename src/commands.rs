@@ -14,6 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
+
 #[derive(Clone, Debug)]
 pub struct CombineOptions {
     pub is_update: bool,
@@ -66,18 +67,24 @@ impl<'s> ignore::ParallelVisitorBuilder<'s> for ProjectVisitorBuilder {
 }
 
 fn parse_limit(s: &str) -> Result<usize> {
-    let s = s.trim().to_uppercase();
-    if s.ends_with('K') {
-        let val: f64 = s[..s.len() - 1].parse()?;
-        Ok((val * 1000.0) as usize)
-    } else if s.ends_with('M') {
-        let val: f64 = s[..s.len() - 1].parse()?;
-        Ok((val * 1_000_000.0) as usize)
-    } else {
-        let val: usize = s.parse()?;
-        Ok(val)
+    let s = s.trim();
+    let last = s.as_bytes().last();
+    match last {
+        Some(b'k') | Some(b'K') => {
+            let val: f64 = s[..s.len() - 1].parse()?;
+            Ok((val * 1000.0) as usize)
+        }
+        Some(b'm') | Some(b'M') => {
+            let val: f64 = s[..s.len() - 1].parse()?;
+            Ok((val * 1_000_000.0) as usize)
+        }
+        _ => {
+            let val: usize = s.parse()?;
+            Ok(val)
+        }
     }
 }
+
 
 pub fn run_init(project_name: Option<String>) -> Result<()> {
     let path = Path::new(".mrgignore");
@@ -137,11 +144,11 @@ fn update_gitignore(_root_name: &str) -> Result<()> {
 
 fn format_count(val: usize) -> String {
     let s = val.to_string();
-    let bytes = s.as_bytes();
-    let len = bytes.len();
-    let mut result = String::new();
-    for (i, &b) in bytes.iter().enumerate() {
-        result.push(b as char);
+    let len = s.len();
+    let commas = (len.saturating_sub(1)) / 3;
+    let mut result = String::with_capacity(len + commas);
+    for (i, ch) in s.chars().enumerate() {
+        result.push(ch);
         let rem = len - 1 - i;
         if rem > 0 && rem % 3 == 0 {
             result.push(',');
@@ -499,8 +506,8 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
     )?;
 
     let real_header = format!(
-        "Project merger tool v{}\n{} ({})\nhash(sha3-256):{}\n**********\n",
-        version, root_name, timestamp, hash_hex
+        "{} v{}\n{}\n(sha3-256):{}\n",
+        root_name, version, timestamp, hash_hex
     );
 
     // 6. Token statistics summing
@@ -670,54 +677,67 @@ fn write_merged_file(
     let res = (|| -> Result<String> {
         let temp_file = fs::File::create(&temp_path)?;
         let mut writer = std::io::BufWriter::new(temp_file);
-
         let mut hasher = sha3::Sha3_256::new();
 
-        let mut write_body = |data: &str| -> std::io::Result<()> {
-            writer.write_all(data.as_bytes())?;
-            hasher.update(data.as_bytes());
+        let mut write_body = |data: &[u8]| -> std::io::Result<()> {
+            writer.write_all(data)?;
+            hasher.update(data);
             Ok(())
         };
 
-        write_body("Project Structure:\n")?;
-        write_body(&format!("{}/\n", root_name))?;
+        write_body(b"Project Structure:\n")?;
+        write_body(root_name.as_bytes())?;
+        write_body(b"/\n")?;
         for line in tree_lines {
-            write_body(line)?;
-            write_body("\n")?;
+            write_body(line.as_bytes())?;
+            write_body(b"\n")?;
         }
-        write_body("\n")?;
+        write_body(b"\n")?;
 
         for file_res in part_files {
-            write_body(&format!("=== start {} ===\n", file_res.rel_path))?;
-            write_body(&file_res.content)?;
-            if !file_res.content.ends_with('\n') {
-                write_body("\n")?;
+            let ext = Path::new(&file_res.rel_path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+
+            write_body(format!("`{}`:\n\n", file_res.rel_path).as_bytes())?;
+            if ext.is_empty() {
+                write_body(b"```\n")?;
+            } else {
+                write_body(format!("```{}\n", ext).as_bytes())?;
             }
-            write_body(&format!("=== end {} ===\n\n", file_res.rel_path))?;
+            write_body(file_res.content.as_bytes())?;
+            if !file_res.content.ends_with('\n') {
+                write_body(b"\n")?;
+            }
+            write_body(b"```\n\n")?;
         }
 
         writer.flush()?;
         drop(writer);
 
         let hash_hex = hex::encode(hasher.finalize());
-
         let real_header = if let Some(p_num) = part_num {
             format!(
-                "Project merger tool v{}\n{} (part {}) ({})\nhash(sha3-256):{}\n**********\n",
-                version, root_name, p_num, timestamp, hash_hex
+                "{} v{} (part {})\n{}\n(sha3-256):{}\n",
+                root_name, version, p_num, timestamp, hash_hex
             )
         } else {
             format!(
-                "Project merger tool v{}\n{} ({})\nhash(sha3-256):{}\n**********\n",
-                version, root_name, timestamp, hash_hex
+                "{} v{}\n{}\n(sha3-256):{}\n",
+                root_name, version, timestamp, hash_hex
             )
         };
 
         let mut final_file = fs::File::create(output_path)?;
         final_file.write_all(real_header.as_bytes())?;
+        final_file.write_all(b"#=#=#=#\n")?;
 
         let mut temp_file = fs::File::open(&temp_path)?;
         std::io::copy(&mut temp_file, &mut final_file)?;
+
+        final_file.write_all(b"#=#=#=#\n")?;
+        drop(final_file);
 
         fs::remove_file(&temp_path)?;
         Ok(hash_hex)
@@ -763,12 +783,19 @@ pub fn run_structure() -> Result<()> {
     let file_path = select_mrg_file()?;
     let content = fs::read_to_string(file_path)?;
 
-    if let Some(pos) = content.find("**********") {
-        let after_sep = content[pos + 10..].trim_start();
-        if let Some(end_pos) = after_sep.find("=== start ") {
-            println!("{}", after_sep[..end_pos].trim_end());
+    if let Some(start) = content.find("#=#=#=#") {
+        let after_start = &content[start + 7..];
+        let after_start = after_start.strip_prefix('\n').unwrap_or(after_start);
+        let body = if let Some(end) = after_start.rfind("#=#=#=#") {
+            &after_start[..end]
         } else {
-            println!("{}", after_sep);
+            after_start
+        };
+
+        if let Some(files_start) = body.find("\n\n`") {
+            println!("{}", body[..files_start].trim_end());
+        } else {
+            println!("{}", body.trim_end());
         }
     } else {
         println!("{}", content);
@@ -780,12 +807,20 @@ pub fn run_file() -> Result<()> {
     let file_path = select_mrg_file()?;
     let content = fs::read_to_string(file_path)?;
 
-    if let Some(pos) = content.find("**********") {
-        let after_sep = content[pos + 10..].trim_start();
-        if let Some(start_pos) = after_sep.find("=== start ") {
-            println!("{}", &after_sep[start_pos..]);
+    if let Some(start) = content.find("#=#=#=#") {
+        let after_start = &content[start + 7..];
+        let after_start = after_start.strip_prefix('\n').unwrap_or(after_start);
+
+        let body = if let Some(end) = after_start.rfind("#=#=#=#") {
+            &after_start[..end]
         } else {
-            println!("{}", after_sep);
+            after_start
+        };
+
+        if let Some(files_start) = body.find("\n\n`") {
+            println!("{}", &body[files_start + 2..].trim_end());
+        } else {
+            println!("No file content found.");
         }
     } else {
         println!("{}", content);
@@ -853,6 +888,7 @@ pub fn run_tokenize(file_path: Option<PathBuf>) -> Result<()> {
 }
 
 pub fn run_tokenize_batch(file_path: Option<PathBuf>) -> Result<()> {
+
     let target_path = match file_path {
         Some(path) => path,
         None => select_mrg_file()?,
@@ -881,6 +917,7 @@ pub fn run_tokenize_batch(file_path: Option<PathBuf>) -> Result<()> {
     // Tokenize through each model with a progress bar
     let models = crate::tokenizer::SUPPORTED_MODELS;
     let pb = ProgressBar::new(models.len() as u64);
+  
     pb.set_style(
         ProgressStyle::default_bar()
             .template(
@@ -890,13 +927,15 @@ pub fn run_tokenize_batch(file_path: Option<PathBuf>) -> Result<()> {
             .progress_chars("▰▰▱"),
     );
 
-    let mut results: Vec<(&str, usize)> = Vec::with_capacity(models.len());
-    for model in models {
+    let mut results: Vec<(&str, usize)> = models
+    .par_iter()
+    .map(|model| {
         pb.set_message(model.display_name);
         let count = ai_counter.count_tokens_for(model.kind, &file_content);
-        results.push((model.display_name, count));
         pb.inc(1);
-    }
+        (model.display_name, count)
+    })
+    .collect();
     pb.finish_with_message("Done!");
 
     // Sort ascending (smallest first, largest at bottom)

@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use tree_sitter::{Node, Parser};
+use std::borrow::Cow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessingMode {
@@ -127,8 +128,12 @@ pub fn minify_content(content: &str, extension: &str) -> String {
     }
 
     let target_content = comment_free_content.as_deref().unwrap_or(content);
-    let mut minified = String::new();
+
+
+
+    let mut minified = String::with_capacity(target_content.len());
     let mut in_multiline_comment = false;
+  
 
     for line in target_content.lines() {
         let trimmed = line.trim();
@@ -206,9 +211,8 @@ pub fn minify_content(content: &str, extension: &str) -> String {
 
         let final_line = line_to_add.trim();
         if !final_line.is_empty() {
-            let leading_indent_len = line_to_add.len() - line_to_add.trim_start().len();
-            let indent = &line_to_add[..leading_indent_len];
-            minified.push_str(indent);
+            let indent_len = line_to_add.len() - line_to_add.trim_start().len();
+            minified.push_str(&line_to_add[..indent_len]);
             minified.push_str(final_line);
             minified.push('\n');
         }
@@ -411,9 +415,21 @@ fn find_nested_child_by_kinds<'a>(node: Node<'a>, kinds: &[&str]) -> Option<Node
     None
 }
 
+/*
+Update in v0.1.13
+
 fn get_node_text<'a>(node: Node<'a>, source: &'a [u8]) -> &'a str {
     std::str::from_utf8(&source[node.start_byte()..node.end_byte()]).unwrap_or("")
 }
+// SAFETY: tree-sitter returns only valid UTF-8 boundaries
+
+*/
+
+fn get_node_text<'a>(node: Node<'a>, source: &'a [u8]) -> &'a str {
+    unsafe { std::str::from_utf8_unchecked(&source[node.start_byte()..node.end_byte()]) }
+}
+
+
 
 fn get_indent(node: Node<'_>, source: &[u8]) -> String {
     let start_byte = node.start_byte();
@@ -684,43 +700,31 @@ pub fn is_binary_file<P: AsRef<Path>>(path: P) -> Result<bool> {
     Ok(false)
 }
 
-pub fn clean_path_for_display(path: &Path) -> String {
-    let mut s = path.to_string_lossy().into_owned();
+pub fn clean_path_for_display(path: &Path) -> Cow<'_, str> {
+    let s = path.to_string_lossy();
     if s.starts_with(".\\") || s.starts_with("./") {
-        s = s[2..].to_string();
+        Cow::Owned(s[2..].replace('\\', "/"))
+    } else if s.contains('\\') {
+        Cow::Owned(s.replace('\\', "/"))
+    } else {
+        s
     }
-    s.replace('\\', "/")
 }
 
 pub fn match_pattern(rel_path: &str, pattern: &str) -> bool {
-    let parts: Vec<&str> = rel_path.split('/').collect();
-    if parts.is_empty() {
-        return false;
-    }
-
     if pattern.starts_with('/') {
-        // Directory pattern
         let dir_pattern = &pattern[1..];
         if dir_pattern.is_empty() {
             return false;
         }
-
-        // The directory components are all components except the last one (which is the file name)
-        let dir_components = if parts.len() > 1 {
-            &parts[..parts.len() - 1]
-        } else {
-            return false;
-        };
-
-        for &comp in dir_components {
+        for comp in rel_path.split('/') {
             if match_subpattern(comp, dir_pattern) {
                 return true;
             }
         }
         false
     } else {
-        // File pattern - matches the file name (the last component)
-        let file_name = parts[parts.len() - 1];
+        let file_name = rel_path.rsplit_once('/').map(|(_, n)| n).unwrap_or(rel_path);
         match_subpattern(file_name, pattern)
     }
 }
