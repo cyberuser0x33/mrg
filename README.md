@@ -130,6 +130,8 @@ You can pass these flags alongside subcommands or use them directly as shortcuts
 - `-o, --only [PATTERNS]...` — Combines **ONLY** files matching specific patterns, ignoring all others completely (regardless of `.mrgignore` or `.gitignore` rules).
   - You can specify file names (`main.js`), extensions (`*.js`), prefixes (`main-*`), substrings (`*n_*`), or directories starting with `/` (`/docs`, `/st*`, `/*init*`).
   - *Example:* `mrg combine -o *.md example* /docs /*init*`
+- `--all-structure` — Includes **ALL** files and directories (even if binary or excluded by `.mrgignore`) in the generated project tree structure, while still skipping their contents from the merged code.
+  - *Example:* `mrg combine --all-structure`
 
 ---
 

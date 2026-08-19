@@ -83,6 +83,10 @@ struct Cli {
     /// Use Maximize processing mode (signatures/skeletons only). filters: d="dir" f="file"
     #[arg(long = "pattern-max", num_args(0..), value_name = "FILTERS", global = true)]
     pattern_max: Option<Vec<String>>,
+
+    /// Include all files and directories (including ignored and binary) in the project structure tree
+    #[arg(long = "all-structure", global = true)]
+    all_structure: bool,
 }
 
 #[derive(Subcommand)]
@@ -178,6 +182,7 @@ fn main() -> Result<()> {
         custom_output_dir: None,
         size_limit,
         only: cli.only.clone(),
+        all_structure: cli.all_structure,
     };
 
     // Handle shortcuts

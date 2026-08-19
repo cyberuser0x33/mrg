@@ -8,6 +8,7 @@ use crate::utils::{
 use anyhow::Result;
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use ignore::WalkBuilder;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::fs;
@@ -29,6 +30,7 @@ pub struct CombineOptions {
     pub custom_output_dir: Option<PathBuf>,
     pub size_limit: Option<u64>,
     pub only: Option<Vec<String>>,
+    pub all_structure: bool,
 }
 
 struct FileResult {
@@ -245,7 +247,15 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
     // 1. Parallel Scanning using WalkParallel
     let (tx, rx) = mpsc::channel();
     let mut builder = WalkBuilder::new(&dir);
-    if options.only.is_some() {
+    if options.all_structure {
+        builder.standard_filters(false);
+        builder.hidden(false);
+        builder.ignore(false);
+        builder.git_ignore(false);
+        builder.git_global(false);
+        builder.git_exclude(false);
+        builder.parents(false);
+    } else if options.only.is_some() {
         builder.standard_filters(false);
         builder.ignore(false);
         builder.git_ignore(false);
@@ -288,7 +298,7 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
         }
     }
 
-    // 2. Filter out large files
+    // 2. Filter out large, ignored, or binary files for merging
     let mut final_files = Vec::new();
     let mut user_ignored_count = 0;
 
@@ -299,25 +309,56 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
         "100 KB".to_string()
     };
 
-    for (path, rel_path, size) in files {
+    let gitignore = if options.all_structure {
+        let mut gitignore_builder = GitignoreBuilder::new(&dir);
+        let mrgignore_in_dir = dir.join(".mrgignore");
+        if mrgignore_in_dir.exists() {
+            gitignore_builder.add(&mrgignore_in_dir);
+        } else if Path::new(".mrgignore").exists() {
+            gitignore_builder.add(".mrgignore");
+        }
+        let gitignore_in_dir = dir.join(".gitignore");
+        if gitignore_in_dir.exists() {
+            gitignore_builder.add(&gitignore_in_dir);
+        } else if Path::new(".gitignore").exists() {
+            gitignore_builder.add(".gitignore");
+        }
+        gitignore_builder
+            .build()
+            .unwrap_or_else(|_| Gitignore::empty())
+    } else {
+        Gitignore::empty()
+    };
+
+    for (path, rel_path, size) in &files {
+        if options.all_structure {
+            if gitignore.matched_path_or_any_parents(path, false).is_ignore() {
+                continue;
+            }
+        }
+
+        if is_binary_file(path).unwrap_or(true) {
+            continue;
+        }
+
         if let Some(ref patterns) = options.only {
-            let matched = patterns.iter().any(|pat| match_pattern(&rel_path, pat));
+            let matched = patterns.iter().any(|pat| match_pattern(rel_path, pat));
             if !matched {
                 continue;
             }
         }
 
-        if size > size_threshold && !options.ignore_size {
-            let size_str = format_file_size(size);
+        if *size > size_threshold && !options.ignore_size {
+            let size_str = format_file_size(*size);
             let mut choice = 'o';
             while choice == 'o' {
-                choice = prompt_large_file(&rel_path, &size_str, &size_limit_str)?;
+                choice = prompt_large_file(rel_path, &size_str, &size_limit_str)?;
                 if choice == 'o' {
-                    let ext = Path::new(&rel_path)
+                    let ext = Path::new(rel_path)
                         .extension()
                         .and_then(|e| e.to_str())
                         .unwrap_or("");
-                    match crate::overview::show_viewer(&path, &rel_path, ext) {
+                    match crate::overview::show_viewer(path, rel_path, ext) {
                         Ok(crate::overview::ViewResult::Include) => {
                             choice = 'y';
                         }
@@ -339,34 +380,43 @@ pub fn run_combine(dir: PathBuf, options: CombineOptions) -> Result<()> {
                 continue;
             }
         }
-        final_files.push((path, rel_path));
+        final_files.push((path.clone(), rel_path.clone()));
     }
 
     let total_ignored_count = user_ignored_count;
 
     // 3. Reconstruct tree structure
-    let mut final_dirs = Vec::new();
-    if options.only.is_some() {
+    let mut root_tree = TreeNode::new(root_name.clone(), true);
+    if options.all_structure {
         for (_, rel_path) in &dirs {
-            let is_prefix = final_files
-                .iter()
-                .any(|(_, f_rel)| f_rel.starts_with(&format!("{}/", rel_path)));
-            if is_prefix {
+            root_tree.insert(Path::new(rel_path), true);
+        }
+        for (_, rel_path, _) in &files {
+            root_tree.insert(Path::new(rel_path), false);
+        }
+    } else {
+        let mut final_dirs = Vec::new();
+        if options.only.is_some() {
+            for (_, rel_path) in &dirs {
+                let is_prefix = final_files
+                    .iter()
+                    .any(|(_, f_rel)| f_rel.starts_with(&format!("{}/", rel_path)));
+                if is_prefix {
+                    final_dirs.push(rel_path.clone());
+                }
+            }
+        } else {
+            for (_, rel_path) in &dirs {
                 final_dirs.push(rel_path.clone());
             }
         }
-    } else {
-        for (_, rel_path) in &dirs {
-            final_dirs.push(rel_path.clone());
-        }
-    }
 
-    let mut root_tree = TreeNode::new(root_name.clone(), true);
-    for rel_path in &final_dirs {
-        root_tree.insert(Path::new(rel_path), true);
-    }
-    for (_, rel_path) in &final_files {
-        root_tree.insert(Path::new(rel_path), false);
+        for rel_path in &final_dirs {
+            root_tree.insert(Path::new(rel_path), true);
+        }
+        for (_, rel_path) in &final_files {
+            root_tree.insert(Path::new(rel_path), false);
+        }
     }
     root_tree.sort();
     let mut tree_lines = Vec::new();
@@ -1094,5 +1144,117 @@ fn prompt_large_file(rel_path: &str, size_str: &str, limit_str: &str) -> Result<
                 term.write_line("")?;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_all_structure_behavior() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+
+        // Create .mrgignore
+        fs::write(
+            root.join(".mrgignore"),
+            "target/\n*.png\nignored_dir/\nsecret.txt\n",
+        )
+        .unwrap();
+
+        // Create files and dirs
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        fs::write(root.join("src/lib.rs"), "pub fn hello() {}\n").unwrap();
+
+        fs::create_dir_all(root.join("target/debug")).unwrap();
+        fs::write(root.join("target/debug/app.exe"), b"\x00\x01\x02").unwrap();
+
+        fs::create_dir_all(root.join("ignored_dir")).unwrap();
+        fs::write(root.join("ignored_dir/notes.txt"), "some notes\n").unwrap();
+
+        fs::write(root.join("secret.txt"), "secret content\n").unwrap();
+        fs::write(root.join("image.png"), b"\x89PNG\r\n\x1a\n\x00").unwrap();
+        fs::write(root.join("binary_unlisted.bin"), b"hello\x00world").unwrap();
+
+        // 1. Combine with all_structure = false
+        let opts_default = CombineOptions {
+            is_update: false,
+            split: None,
+            notsplit: true,
+            ignore_size: true,
+            pattern: false,
+            pattern_full: true,
+            pattern_min: false,
+            pattern_max: None,
+            custom_project_name: Some("test_proj".to_string()),
+            custom_output_dir: Some(root.to_path_buf()),
+            size_limit: None,
+            only: None,
+            all_structure: false,
+        };
+
+        run_combine(root.to_path_buf(), opts_default).unwrap();
+
+        let out_path = root.join("mrg-test_proj.txt");
+        assert!(out_path.exists());
+        let content_default = fs::read_to_string(&out_path).unwrap();
+
+        // In default mode: ignored folders and binary files must not be in the tree
+        assert!(!content_default.contains("target"));
+        assert!(!content_default.contains("ignored_dir"));
+        assert!(!content_default.contains("secret.txt"));
+        assert!(!content_default.contains("image.png"));
+        assert!(!content_default.contains("binary_unlisted.bin"));
+        assert!(content_default.contains("src/main.rs") || content_default.contains("main.rs"));
+
+        // Content blocks
+        assert!(content_default.contains("`src/main.rs`:"));
+        assert!(content_default.contains("`src/lib.rs`:"));
+        assert!(!content_default.contains("`secret.txt`:"));
+        assert!(!content_default.contains("`image.png`:"));
+
+        fs::remove_file(&out_path).unwrap();
+
+        // 2. Combine with all_structure = true
+        let opts_all = CombineOptions {
+            is_update: false,
+            split: None,
+            notsplit: true,
+            ignore_size: true,
+            pattern: false,
+            pattern_full: true,
+            pattern_min: false,
+            pattern_max: None,
+            custom_project_name: Some("test_proj".to_string()),
+            custom_output_dir: Some(root.to_path_buf()),
+            size_limit: None,
+            only: None,
+            all_structure: true,
+        };
+
+        run_combine(root.to_path_buf(), opts_all).unwrap();
+
+        assert!(out_path.exists());
+        let content_all = fs::read_to_string(&out_path).unwrap();
+
+        // In all_structure mode: tree structure contains ALL files and folders
+        assert!(content_all.contains("target"));
+        assert!(content_all.contains("ignored_dir"));
+        assert!(content_all.contains("secret.txt"));
+        assert!(content_all.contains("image.png"));
+        assert!(content_all.contains("binary_unlisted.bin"));
+        assert!(content_all.contains("src"));
+
+        // But merged code content blocks MUST NOT include ignored or binary files
+        assert!(content_all.contains("`src/main.rs`:"));
+        assert!(content_all.contains("`src/lib.rs`:"));
+        assert!(!content_all.contains("`secret.txt`:"));
+        assert!(!content_all.contains("`ignored_dir/notes.txt`:"));
+        assert!(!content_all.contains("`image.png`:"));
+        assert!(!content_all.contains("`target/debug/app.exe`:"));
+        assert!(!content_all.contains("`binary_unlisted.bin`:"));
     }
 }

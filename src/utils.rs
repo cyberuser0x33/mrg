@@ -767,4 +767,35 @@ mod tests {
         assert!(match_pattern("src/init_db/main.rs", "/*init*"));
         assert!(!match_pattern("src/main.rs", "/docs"));
     }
+
+    #[test]
+    fn test_tree_node_construction() {
+        let mut root = TreeNode::new("my_project".to_string(), true);
+        root.insert(Path::new("src/main.rs"), false);
+        root.insert(Path::new("src/utils.rs"), false);
+        root.insert(Path::new("target/debug/app.exe"), false);
+        root.insert(Path::new("diagram.png"), false);
+        root.insert(Path::new("Cargo.toml"), false);
+        root.sort();
+
+        let mut lines = Vec::new();
+        root.build_lines("", &mut lines);
+
+        assert!(lines.iter().any(|l| l.contains("src")));
+        assert!(lines.iter().any(|l| l.contains("target")));
+        assert!(lines.iter().any(|l| l.contains("diagram.png")));
+        assert!(lines.iter().any(|l| l.contains("Cargo.toml")));
+    }
+
+    #[test]
+    fn test_is_binary_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let text_path = temp_dir.path().join("test.txt");
+        fs::write(&text_path, "hello world\nline 2").unwrap();
+        assert_eq!(is_binary_file(&text_path).unwrap(), false);
+
+        let bin_path = temp_dir.path().join("test.bin");
+        fs::write(&bin_path, b"hello\x00world").unwrap();
+        assert_eq!(is_binary_file(&bin_path).unwrap(), true);
+    }
 }
